@@ -1,0 +1,21 @@
+server:
+  port: 8081
+
+schema:
+  registry:
+    kafka-bootstrap-servers: ${SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS:localhost:9092}
+    topic: ${SCHEMA_REGISTRY_KAFKASTORE_TOPIC:_schemas}
+    topic-replication-factor: ${SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR:1}
+    group-id: ${SCHEMA_REGISTRY_GROUP_ID:schema-registry-mirror}
+    compatibility-level: ${SCHEMA_REGISTRY_COMPATIBILITY_LEVEL:BACKWARD}
+    mode: ${SCHEMA_REGISTRY_MODE:READWRITE}
+    host: ${SCHEMA_REGISTRY_HOST:localhost}
+    port: ${server.port}
+    init-timeout: ${SCHEMA_REGISTRY_INIT_TIMEOUT:60000}
+    kafka-store-timeout-ms: ${SCHEMA_REGISTRY_KAFKASTORE_TIMEOUT:500}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
