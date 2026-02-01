@@ -246,7 +246,7 @@ public class SchemaRegistryServiceImpl implements SchemaRegistryService {
 
         // Determine next version
         int latestVersion = store.getLatestVersion(subject, true);
-        int newVersion = latestVersion + 1;
+        int newVersion = Math.max(1, latestVersion + 1);
 
         // Write to Kafka
         SchemaValue schemaValue = new SchemaValue(
