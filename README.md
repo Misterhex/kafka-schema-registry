@@ -1,6 +1,15 @@
 # Schema Registry Mirror
 
-A wire-compatible Confluent Schema Registry implementation built with Spring Boot. It stores schemas in a Kafka topic (`_schemas`) and materializes them in memory, providing the same REST API as the Confluent Schema Registry.
+A wire-compatible [Confluent Schema Registry](https://docs.confluent.io/platform/current/schema-registry/index.html) implementation built with Spring Boot 3.4.1 and Java 21. It stores schemas in a compacted Kafka topic (`_schemas`) and materializes them in memory, providing the same REST API as the Confluent Schema Registry. Supports AVRO, JSON, and PROTOBUF schema types.
+
+## Prerequisites
+
+| Dependency | Version | Notes |
+|---|---|---|
+| Java | 21 | Eclipse Temurin recommended |
+| Gradle | 8.12 | Bundled via `gradlew` wrapper |
+| Docker | 20+ | Required for Testcontainers and Docker Compose |
+| Apache Kafka | 3.8+ | KRaft mode (no ZooKeeper) |
 
 ## Quick Start
 
@@ -21,9 +30,16 @@ Requires a running Kafka broker.
 java -jar build/libs/schema-registry-mirror-0.1.0-SNAPSHOT.jar
 ```
 
+### Verify It Works
+
+```bash
+curl http://localhost:8081/schemas/types
+# ["AVRO","JSON","PROTOBUF"]
+```
+
 ## Configuration
 
-All settings can be overridden via environment variables:
+All settings are defined in `src/main/resources/application.yml` and can be overridden via environment variables:
 
 | Environment Variable | Default | Description |
 |---|---|---|
@@ -36,6 +52,144 @@ All settings can be overridden via environment variables:
 | `SCHEMA_REGISTRY_HOST` | `localhost` | Advertised host |
 | `SCHEMA_REGISTRY_INIT_TIMEOUT` | `60000` | Initialization timeout (ms) |
 | `SCHEMA_REGISTRY_KAFKASTORE_TIMEOUT` | `500` | Kafka store operation timeout (ms) |
+
+The server listens on port `8081` (configured via `server.port` in `application.yml`).
+
+Spring Boot Actuator exposes `/actuator/health` and `/actuator/info` endpoints for health checking and service metadata.
+
+## How It Works
+
+Schema Registry Mirror uses an event-sourcing architecture with a compacted Kafka topic as the source of truth and an in-memory store for serving reads.
+
+### Data Flow
+
+```
+                     ┌─────────────────────────────────────────────────┐
+                     │              Schema Registry Mirror             │
+                     │                                                 │
+  REST Request ─────►│  Controller ──► Service ──► KafkaSchemaStore    │
+                     │                                    │            │
+                     │                                    │ produce    │
+                     │                                    ▼            │
+                     │                            ┌──────────────┐     │
+                     │                            │ Kafka Topic  │     │
+                     │                            │  (_schemas)  │     │
+                     │                            └──────┬───────┘     │
+                     │                                   │ consume     │
+                     │                                   ▼            │
+                     │                        KafkaStoreReaderThread   │
+                     │                                   │            │
+                     │                                   │ apply      │
+                     │                                   ▼            │
+  REST Response ◄────│  Controller ◄── Service ◄── InMemoryStore      │
+                     │                                                 │
+                     └─────────────────────────────────────────────────┘
+```
+
+### Write Path
+
+All mutations (register schema, update config, delete subject, etc.) are produced to the `_schemas` Kafka topic by `KafkaSchemaStore`. The write is not considered complete until the record is acknowledged by Kafka.
+
+### Read Path
+
+All reads are served directly from `InMemoryStore`, which holds the fully materialized state in memory. This provides low-latency responses without any Kafka or database round-trips.
+
+### Startup Flow
+
+1. The application starts and creates a `KafkaStoreReaderThread` (a background daemon thread).
+2. The reader thread consumes the `_schemas` topic from the beginning.
+3. Each record is deserialized and applied to `InMemoryStore`, rebuilding the full state.
+4. Once the reader catches up to the end of the topic, the registry is ready to serve requests.
+5. The reader continues to consume new records in the background, keeping the in-memory state current.
+
+### Key Invariants
+
+- **All writes go through Kafka first.** The in-memory store is never written to directly by the service layer.
+- **Durability via Kafka.** Schemas survive restarts because state is rebuilt from the compacted topic.
+- **Consistency via total ordering.** Kafka provides a single-partition total order for all schema operations.
+
+## Project Structure
+
+```
+src/main/java/io/schemaregistry/mirror/
+├── SchemaRegistryMirrorApplication.java   # Application entry point
+├── config/                                # Spring configuration
+│   ├── SchemaRegistryProperties.java      # Binds schema.registry.* properties
+│   ├── KafkaConfig.java                   # Kafka producer and consumer beans
+│   ├── JacksonConfig.java                 # JSON serialization settings
+│   └── WebMvcConfig.java                  # Content negotiation, media types
+├── controller/                            # REST API layer (9 controllers)
+│   ├── RootController.java                # GET /
+│   ├── SubjectsController.java            # /subjects
+│   ├── SubjectVersionsController.java     # /subjects/{subject}/versions
+│   ├── SchemasController.java             # /schemas/ids/{id}
+│   ├── CompatibilityController.java       # /compatibility/subjects/{subject}/versions
+│   ├── ConfigController.java              # /config
+│   ├── ModeController.java                # /mode
+│   ├── ContextsController.java            # /contexts
+│   └── ServerMetadataController.java      # /v1/metadata
+├── service/                               # Business logic
+│   ├── SchemaRegistryService.java         # Service interface
+│   ├── SchemaRegistryServiceImpl.java     # Core implementation (~580 lines)
+│   └── CompatibilityService.java          # Schema compatibility checking
+├── storage/                               # Persistence layer
+│   ├── SchemaStore.java                   # Store interface
+│   ├── KafkaSchemaStore.java              # Kafka producer (writes)
+│   ├── KafkaStoreReaderThread.java        # Kafka consumer (reads → memory)
+│   ├── InMemoryStore.java                 # In-memory materialized state
+│   └── model/                             # Kafka topic record types
+│       ├── SchemaRegistryKey.java         # Base key interface
+│       ├── SchemaRegistryValue.java       # Base value interface
+│       ├── SchemaRegistryKeyType.java     # Key type enum
+│       ├── SchemaKey.java / SchemaValue.java
+│       ├── ConfigKey.java / ConfigValue.java
+│       ├── ModeKey.java / ModeValue.java
+│       ├── DeleteSubjectKey.java / DeleteSubjectValue.java
+│       ├── ClearSubjectKey.java / ClearSubjectValue.java
+│       └── NoopKey.java
+├── schema/                                # Schema types
+│   └── CompatibilityLevel.java            # Enum: NONE, BACKWARD, FORWARD, FULL, *_TRANSITIVE
+└── exception/                             # Error handling
+    ├── SchemaRegistryException.java       # Confluent-compatible error codes
+    └── GlobalExceptionHandler.java        # Maps exceptions to REST responses
+```
+
+### Package Descriptions
+
+**`config/`** — Spring configuration beans. `SchemaRegistryProperties` binds all `schema.registry.*` properties from `application.yml`. `KafkaConfig` creates the Kafka producer and consumer. `JacksonConfig` configures JSON serialization. `WebMvcConfig` sets up content negotiation and registers Confluent-compatible media types (`application/vnd.schemaregistry.v1+json`).
+
+**`controller/`** — Nine REST controllers that map the full Confluent Schema Registry API surface (29 endpoints). All endpoints produce `application/vnd.schemaregistry.v1+json`. Controllers delegate to the service layer and do not contain business logic.
+
+**`service/`** — `SchemaRegistryServiceImpl` contains the core business logic for schema registration, lookup, deletion, compatibility checking, and config/mode management. `CompatibilityService` uses Confluent's schema providers (Avro, JSON Schema, Protobuf) to evaluate schema compatibility.
+
+**`storage/`** — Dual-layer persistence. `KafkaSchemaStore` writes typed records to Kafka. `KafkaStoreReaderThread` is a background daemon that consumes from the `_schemas` topic and applies records to `InMemoryStore`. The `model/` subdirectory contains typed key/value pairs serialized as JSON in the Kafka topic.
+
+**`exception/`** — `SchemaRegistryException` carries Confluent-compatible error codes (40401, 42201, etc.). `GlobalExceptionHandler` is a `@RestControllerAdvice` that translates exceptions into JSON error responses.
+
+**`schema/`** — Contains the `CompatibilityLevel` enum with seven levels: `NONE`, `BACKWARD`, `BACKWARD_TRANSITIVE`, `FORWARD`, `FORWARD_TRANSITIVE`, `FULL`, `FULL_TRANSITIVE`.
+
+## Entrypoints
+
+### Application Main Class
+
+`io.schemaregistry.mirror.SchemaRegistryMirrorApplication` — annotated with `@SpringBootApplication` and `@EnableConfigurationProperties`. This is the standard Spring Boot entry point.
+
+### REST API
+
+29 endpoints across 9 controllers, listening on port 8081. All responses use `application/vnd.schemaregistry.v1+json` content type. See [API Reference](#api-reference) below.
+
+### Kafka Consumer
+
+`KafkaStoreReaderThread` runs as a background daemon thread. It consumes the `_schemas` compacted topic from the beginning, materializing all records into `InMemoryStore`. It continues running for the lifetime of the application to pick up new writes.
+
+### Actuator Endpoints
+
+Spring Boot Actuator is enabled with the following endpoints:
+
+| Endpoint | Description |
+|---|---|
+| `GET /actuator/health` | Application health status |
+| `GET /actuator/info` | Application info |
 
 ## API Reference
 
@@ -181,46 +335,99 @@ All error responses use the format:
 
 ## Building
 
+Build the project (without tests):
+
 ```bash
 ./gradlew build -x test
 ```
 
-To run tests (requires Docker for Testcontainers):
+Build only the fat JAR:
 
 ```bash
-./gradlew test
+./gradlew bootJar
 ```
 
-## Docker
+The JAR is output to `build/libs/schema-registry-mirror-0.1.0-SNAPSHOT.jar`.
 
-### Build the image
+Build the Docker image:
 
 ```bash
 docker build -t schema-registry-mirror .
 ```
 
-### Run with Docker Compose
+The Dockerfile uses a multi-stage build: `gradle:8.12-jdk21` for building, `eclipse-temurin:21-jre-alpine` for the runtime image.
+
+## Testing
+
+### Unit and Integration Tests (Gradle)
+
+Requires Docker (for Testcontainers with Kafka):
 
 ```bash
-docker compose up -d        # start
-docker compose logs -f       # view logs
-docker compose down -v       # stop and clean up
+./gradlew test
 ```
 
-### Run the test suite
+Run a single test class:
 
 ```bash
+./gradlew test --tests "io.schemaregistry.mirror.integration.SomeTest"
+```
+
+### Shell Integration Tests
+
+`test.sh` runs 32 curl-based assertions covering the full API surface. Requires the service to be running.
+
+```bash
+# Start the service
 docker compose up -d
+
+# Run the tests (default: http://localhost:8081)
 ./test.sh
+
+# Override the target URL
+SR_URL=http://host:port ./test.sh
+
+# Clean up
 docker compose down -v
 ```
 
-## Architecture
+The test script covers: root endpoint, subject CRUD, schema registration (AVRO, JSON, PROTOBUF), versioning, schema lookup by ID and content, compatibility checking, config and mode management, soft and permanent deletion, error cases, content-type validation, and server metadata.
 
-The mirror reads and writes schema records to a compacted Kafka topic (`_schemas` by default). On startup, a `KafkaStoreReaderThread` consumes the topic from the beginning and materializes all records into an `InMemoryStore`. This provides:
+## Running
 
-- **Durability** — schemas survive restarts via Kafka's log
-- **Consistency** — writes go through Kafka, ensuring a total order
-- **Low latency** — reads are served from memory
+### JAR
 
-The storage layer uses typed key/value pairs (`SchemaKey`, `ConfigKey`, `ModeKey`, `DeleteSubjectKey`, `ClearSubjectKey`) serialized as JSON. Each key type corresponds to a different class of metadata stored in the topic.
+Requires a running Kafka broker at the configured bootstrap servers.
+
+```bash
+./gradlew bootJar
+java -jar build/libs/schema-registry-mirror-0.1.0-SNAPSHOT.jar
+```
+
+Override configuration via environment variables:
+
+```bash
+SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS=kafka1:9092,kafka2:9092 \
+  java -jar build/libs/schema-registry-mirror-0.1.0-SNAPSHOT.jar
+```
+
+### Docker
+
+```bash
+docker build -t schema-registry-mirror .
+docker run -p 8081:8081 \
+  -e SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS=kafka:9092 \
+  schema-registry-mirror
+```
+
+### Docker Compose
+
+Starts Kafka (KRaft mode, Apache Kafka 4.0.0) and the schema registry together:
+
+```bash
+docker compose up -d        # Start all services
+docker compose logs -f       # View logs
+docker compose down -v       # Stop and remove volumes
+```
+
+The Kafka broker is accessible at `localhost:29092` from the host and at `kafka:9092` from within the Docker network. The schema registry is accessible at `localhost:8081`.
