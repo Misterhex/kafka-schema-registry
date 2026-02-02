@@ -13,6 +13,9 @@ schema:
     port: ${server.port}
     init-timeout: ${SCHEMA_REGISTRY_INIT_TIMEOUT:60000}
     kafka-store-timeout-ms: ${SCHEMA_REGISTRY_KAFKASTORE_TIMEOUT:500}
+    auth:
+      username: ${SCHEMA_REGISTRY_AUTH_USERNAME:admin}
+      password: ${SCHEMA_REGISTRY_AUTH_PASSWORD:}
 
 management:
   endpoints:
