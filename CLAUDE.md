@@ -10,13 +10,13 @@ Schema Registry Mirror is a wire-compatible Confluent Schema Registry implementa
 
 ```bash
 # Build (skip tests)
-./gradlew build -x test
+./gradlew :server:build -x test
 
 # Build bootable JAR
-./gradlew bootJar
+./gradlew :server:bootJar
 
 # Run tests (requires Docker for Testcontainers)
-./gradlew test
+./gradlew :server:test
 
 # Run locally with Docker Compose (Kafka + Schema Registry)
 docker compose up -d
@@ -30,7 +30,7 @@ docker compose down -v
 docker build -t schema-registry-mirror .
 
 # Run JAR directly (requires Kafka at localhost:9092)
-java -jar build/libs/schema-registry-mirror-0.1.0-SNAPSHOT.jar
+java -jar server/build/libs/schema-registry-mirror-0.1.0-SNAPSHOT.jar
 ```
 
 Build uses Gradle 8.12 with the Spring Boot and Spring Dependency Management plugins. Dependencies include Confluent's schema registry client and schema providers (Avro, JSON Schema, Protobuf) from `packages.confluent.io/maven/`.
@@ -71,14 +71,47 @@ All code lives under `io.schemaregistry.mirror`:
 - `exception/` — `SchemaRegistryException` with Confluent-compatible error codes, `GlobalExceptionHandler`
 - `schema/` — `CompatibilityLevel` enum (NONE, BACKWARD, FORWARD, FULL, and their TRANSITIVE variants)
 
+## A/B Testing Module
+
+The `ab-testing/` subproject is a CLI application that validates the Mirror implementation against the official Confluent Schema Registry. It sends identical requests to both instances and compares responses across 18 test phases (registration, evolution, compatibility, deletes, error codes, protobuf, references, cleanup, etc.).
+
+```bash
+# Build
+./gradlew :ab-testing:build -x test
+
+# Start both registries for A/B testing
+docker compose -f docker-compose-ab-test.yml up -d
+
+# Run A/B tests
+./gradlew :ab-testing:bootRun
+
+# Or via JAR
+java -jar ab-testing/build/libs/ab-testing-0.1.0-SNAPSHOT.jar
+```
+
+**Configuration** (env vars or Spring properties):
+- `ABTEST_CONFLUENT_URL` — Confluent SR endpoint (default: `http://localhost:8085`)
+- `ABTEST_MIRROR_URL` — Mirror SR endpoint (default: `http://localhost:8086`)
+- `ABTEST_MIRROR_USERNAME` / `ABTEST_MIRROR_PASSWORD` — Auth credentials for mirror
+- `ABTEST_REPORT_FILE` — Output report path (default: `ab-test-report.json`)
+
+**Key classes** under `io.schemaregistry.abtest`:
+- `AbTestRunner` orchestrates all test phases and collects results
+- `HttpExecutor` sends identical requests to both registries
+- `ResponseComparator` compares responses using three modes: `EXACT`, `SET` (order-independent), `STRUCTURAL` (ignoring transient fields like timestamps)
+- Test phases are in `tests/` — each implements `TestPhase` via `AbstractTestPhase`
+
+Exit code 0 = all tests passed, 1 = differences found.
+
 ## Testing
 
-- **Unit/integration tests:** JUnit 5 via `./gradlew test`. Uses Testcontainers (`org.testcontainers:kafka`) so Docker must be running.
+- **Unit/integration tests:** JUnit 5 via `./gradlew :server:test`. Uses Testcontainers (`org.testcontainers:kafka`) so Docker must be running.
 - **Bash integration tests:** `test.sh` exercises the full REST API with curl against a running instance. Set `SR_URL` to override the default `http://localhost:8081`.
+- **A/B tests:** See "A/B Testing Module" section above.
 
 ## Configuration
 
-Spring Boot config is in `src/main/resources/application.yml`. All properties are under the `schema.registry` prefix and bound to `SchemaRegistryProperties`. Override via environment variables (e.g., `SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS`, `SCHEMA_REGISTRY_COMPATIBILITY_LEVEL`). See the README for the full list.
+Spring Boot config is in `server/src/main/resources/application.yml`. All properties are under the `schema.registry` prefix and bound to `SchemaRegistryProperties`. Override via environment variables (e.g., `SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS`, `SCHEMA_REGISTRY_COMPATIBILITY_LEVEL`). See the README for the full list.
 
 ## Error Handling
 

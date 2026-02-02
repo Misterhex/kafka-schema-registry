@@ -1,44 +1,8 @@
-plugins {
-    id 'java'
-    id 'org.springframework.boot' version '3.4.1'
-    id 'io.spring.dependency-management' version '1.1.7'
-}
+allprojects {
+    group = 'io.schemaregistry'
+    version = '0.1.0-SNAPSHOT'
 
-group = 'io.schemaregistry'
-version = '0.1.0-SNAPSHOT'
-
-java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
+    repositories {
+        mavenCentral()
     }
-}
-
-repositories {
-    mavenCentral()
-    maven { url 'https://packages.confluent.io/maven/' }
-}
-
-dependencies {
-    // Spring Boot
-    implementation 'org.springframework.boot:spring-boot-starter-web'
-    implementation 'org.springframework.boot:spring-boot-starter-actuator'
-    implementation 'io.micrometer:micrometer-registry-prometheus'
-
-    // Kafka clients
-    implementation 'org.apache.kafka:kafka-clients:3.8.0'
-
-    // Confluent: client DTOs + schema providers (compatibility checking)
-    implementation 'io.confluent:kafka-schema-registry-client:7.7.0'
-    implementation 'io.confluent:kafka-avro-serializer:7.7.0'
-    implementation 'io.confluent:kafka-json-schema-provider:7.7.0'
-    implementation 'io.confluent:kafka-protobuf-provider:7.7.0'
-
-    // Test
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
-    testImplementation 'org.testcontainers:kafka:1.20.0'
-    testImplementation 'org.testcontainers:junit-jupiter:1.20.0'
-}
-
-test {
-    useJUnitPlatform()
 }

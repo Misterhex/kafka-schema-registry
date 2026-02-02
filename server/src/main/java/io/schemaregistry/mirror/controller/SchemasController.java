@@ -5,8 +5,10 @@ import io.confluent.kafka.schemaregistry.client.rest.entities.SchemaString;
 import io.confluent.kafka.schemaregistry.client.rest.entities.SubjectVersion;
 import io.schemaregistry.mirror.config.WebMvcConfig;
 import io.schemaregistry.mirror.service.SchemaRegistryService;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.IOException;
 import java.util.List;
 
 @RestController
@@ -26,11 +28,14 @@ public class SchemasController {
         return service.getSchemaStringById(id, subject, fetchMaxId);
     }
 
-    @GetMapping(value = "/schemas/ids/{id}/schema", produces = {WebMvcConfig.SCHEMA_REGISTRY_V1_JSON, WebMvcConfig.SCHEMA_REGISTRY_DEFAULT_JSON, WebMvcConfig.JSON})
-    public String getRawSchemaById(
+    @GetMapping("/schemas/ids/{id}/schema")
+    public void getRawSchemaById(
             @PathVariable("id") int id,
-            @RequestParam(value = "subject", required = false) String subject) {
-        return service.getRawSchemaById(id, subject);
+            @RequestParam(value = "subject", required = false) String subject,
+            HttpServletResponse response) throws IOException {
+        String schema = service.getRawSchemaById(id, subject);
+        response.setContentType(WebMvcConfig.SCHEMA_REGISTRY_V1_JSON);
+        response.getWriter().write(schema);
     }
 
     @GetMapping(value = "/schemas/ids/{id}/subjects", produces = {WebMvcConfig.SCHEMA_REGISTRY_V1_JSON, WebMvcConfig.SCHEMA_REGISTRY_DEFAULT_JSON, WebMvcConfig.JSON})

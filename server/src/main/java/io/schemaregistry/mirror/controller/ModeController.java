@@ -2,8 +2,11 @@ package io.schemaregistry.mirror.controller;
 
 import io.schemaregistry.mirror.config.WebMvcConfig;
 import io.schemaregistry.mirror.service.SchemaRegistryService;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @RestController
@@ -29,14 +32,17 @@ public class ModeController {
     }
 
     @DeleteMapping(value = "/mode", produces = {WebMvcConfig.SCHEMA_REGISTRY_V1_JSON, WebMvcConfig.SCHEMA_REGISTRY_DEFAULT_JSON, WebMvcConfig.JSON})
-    public Map<String, String> deleteGlobalMode() {
-        return service.setGlobalMode("READWRITE", false);
+    public ResponseEntity<Map<String, Object>> deleteGlobalMode() {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("error_code", 405);
+        body.put("message", "HTTP 405 Method Not Allowed");
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(body);
     }
 
     @GetMapping(value = "/mode/{subject}", produces = {WebMvcConfig.SCHEMA_REGISTRY_V1_JSON, WebMvcConfig.SCHEMA_REGISTRY_DEFAULT_JSON, WebMvcConfig.JSON})
     public Map<String, String> getSubjectMode(
             @PathVariable("subject") String subject,
-            @RequestParam(value = "defaultToGlobal", required = false, defaultValue = "true") boolean defaultToGlobal) {
+            @RequestParam(value = "defaultToGlobal", required = false, defaultValue = "false") boolean defaultToGlobal) {
         return service.getSubjectMode(subject, defaultToGlobal);
     }
 

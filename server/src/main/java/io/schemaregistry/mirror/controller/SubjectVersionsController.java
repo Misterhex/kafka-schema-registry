@@ -5,8 +5,10 @@ import io.confluent.kafka.schemaregistry.client.rest.entities.requests.RegisterS
 import io.confluent.kafka.schemaregistry.client.rest.entities.requests.RegisterSchemaResponse;
 import io.schemaregistry.mirror.config.WebMvcConfig;
 import io.schemaregistry.mirror.service.SchemaRegistryService;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.IOException;
 import java.util.List;
 
 @RestController
@@ -33,11 +35,14 @@ public class SubjectVersionsController {
         return service.getSchemaByVersion(subject, version, deleted);
     }
 
-    @GetMapping(value = "/subjects/{subject}/versions/{version}/schema", produces = {WebMvcConfig.SCHEMA_REGISTRY_V1_JSON, WebMvcConfig.SCHEMA_REGISTRY_DEFAULT_JSON, WebMvcConfig.JSON})
-    public String getRawSchemaByVersion(
+    @GetMapping("/subjects/{subject}/versions/{version}/schema")
+    public void getRawSchemaByVersion(
             @PathVariable("subject") String subject,
-            @PathVariable("version") String version) {
-        return service.getRawSchemaByVersion(subject, version);
+            @PathVariable("version") String version,
+            HttpServletResponse response) throws IOException {
+        String schema = service.getRawSchemaByVersion(subject, version);
+        response.setContentType(WebMvcConfig.SCHEMA_REGISTRY_V1_JSON);
+        response.getWriter().write(schema);
     }
 
     @GetMapping(value = "/subjects/{subject}/versions/{version}/referencedby", produces = {WebMvcConfig.SCHEMA_REGISTRY_V1_JSON, WebMvcConfig.SCHEMA_REGISTRY_DEFAULT_JSON, WebMvcConfig.JSON})
