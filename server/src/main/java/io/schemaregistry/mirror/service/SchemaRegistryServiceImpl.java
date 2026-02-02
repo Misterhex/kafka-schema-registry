@@ -172,16 +172,16 @@ public class SchemaRegistryServiceImpl implements SchemaRegistryService {
         String schemaString = request.getSchema();
         List<SchemaReference> references = request.getReferences();
 
+        // Parse schema first (validate before checking mode, matching Confluent behavior)
+        ParsedSchema parsedSchema = compatibilityService.parseSchema(
+            schemaType, schemaString, references, normalize);
+
         // Check mode
         String mode = store.getInMemoryStore().getEffectiveMode(subject);
         if ("READONLY".equals(mode)) {
             throw SchemaRegistryException.operationNotPermittedException(
                 "Subject " + subject + " is in read-only mode");
         }
-
-        // Parse schema
-        ParsedSchema parsedSchema = compatibilityService.parseSchema(
-            schemaType, schemaString, references, normalize);
 
         String canonicalString = normalize ? parsedSchema.canonicalString() : schemaString;
 
@@ -306,6 +306,12 @@ public class SchemaRegistryServiceImpl implements SchemaRegistryService {
             throw SchemaRegistryException.subjectNotFoundException(subject);
         }
 
+        String mode = store.getInMemoryStore().getEffectiveMode(subject);
+        if ("READONLY".equals(mode)) {
+            throw SchemaRegistryException.operationNotPermittedException(
+                "Subject " + subject + " is in read-only mode");
+        }
+
         if (permanent) {
             // Must be soft-deleted first
             if (!store.getInMemoryStore().isSubjectSoftDeleted(subject)) {
@@ -332,6 +338,12 @@ public class SchemaRegistryServiceImpl implements SchemaRegistryService {
     public int deleteSchemaVersion(String subject, String version, boolean permanent) {
         if (!store.hasSubject(subject, true)) {
             throw SchemaRegistryException.subjectNotFoundException(subject);
+        }
+
+        String mode = store.getInMemoryStore().getEffectiveMode(subject);
+        if ("READONLY".equals(mode)) {
+            throw SchemaRegistryException.operationNotPermittedException(
+                "Subject " + subject + " is in read-only mode");
         }
 
         int versionInt = resolveVersion(subject, version, true);
@@ -496,6 +508,13 @@ public class SchemaRegistryServiceImpl implements SchemaRegistryService {
     @Override
     public Map<String, String> setSubjectMode(String subject, String mode, boolean force) {
         validateMode(mode);
+        if ("IMPORT".equalsIgnoreCase(mode) && !force) {
+            List<String> subjects = store.getSubjects(false);
+            if (!subjects.isEmpty()) {
+                throw SchemaRegistryException.operationNotPermittedException(
+                    "Cannot import since found existing subjects");
+            }
+        }
         store.setSubjectMode(subject, mode);
         Map<String, String> result = new LinkedHashMap<>();
         result.put("mode", mode);
@@ -506,7 +525,7 @@ public class SchemaRegistryServiceImpl implements SchemaRegistryService {
     public Map<String, String> deleteSubjectMode(String subject) {
         String mode = store.getSubjectMode(subject);
         if (mode == null) {
-            throw SchemaRegistryException.subjectLevelModeNotConfigured(subject);
+            throw SchemaRegistryException.subjectNotFoundException(subject);
         }
         store.deleteSubjectMode(subject);
         Map<String, String> result = new LinkedHashMap<>();

@@ -6,6 +6,7 @@ import io.schemaregistry.mirror.schema.CompatibilityLevel;
 import io.schemaregistry.mirror.service.SchemaRegistryService;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @RestController
@@ -31,8 +32,11 @@ public class ConfigController {
 
     @DeleteMapping(value = "/config", produces = {WebMvcConfig.SCHEMA_REGISTRY_V1_JSON, WebMvcConfig.SCHEMA_REGISTRY_DEFAULT_JSON, WebMvcConfig.JSON})
     public Map<String, String> deleteGlobalConfig() {
-        // Reset to default (BACKWARD)
-        return service.setGlobalConfig(CompatibilityLevel.BACKWARD);
+        String previousLevel = service.getGlobalConfig().get("compatibilityLevel");
+        service.setGlobalConfig(CompatibilityLevel.BACKWARD);
+        Map<String, String> result = new LinkedHashMap<>();
+        result.put("compatibilityLevel", previousLevel);
+        return result;
     }
 
     @GetMapping(value = "/config/{subject}", produces = {WebMvcConfig.SCHEMA_REGISTRY_V1_JSON, WebMvcConfig.SCHEMA_REGISTRY_DEFAULT_JSON, WebMvcConfig.JSON})

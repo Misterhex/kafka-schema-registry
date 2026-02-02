@@ -1,0 +1,13 @@
+server:
+  port: 0
+
+spring:
+  main:
+    web-application-type: none
+
+abtest:
+  confluent-url: ${ABTEST_CONFLUENT_URL:http://localhost:8085}
+  mirror-url: ${ABTEST_MIRROR_URL:http://localhost:8086}
+  mirror-username: ${ABTEST_MIRROR_USERNAME:admin}
+  mirror-password: ${ABTEST_MIRROR_PASSWORD:test}
+  report-file: ${ABTEST_REPORT_FILE:ab-test-report.json}

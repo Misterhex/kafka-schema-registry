@@ -26,8 +26,8 @@ This starts Kafka (KRaft mode, no ZooKeeper) and the schema registry on port 808
 Requires a running Kafka broker.
 
 ```bash
-./gradlew bootJar
-java -jar build/libs/schema-registry-mirror-0.1.0-SNAPSHOT.jar
+./gradlew :server:bootJar
+java -jar server/build/libs/schema-registry-mirror-0.1.0-SNAPSHOT.jar
 ```
 
 ### Verify It Works
@@ -39,7 +39,7 @@ curl http://localhost:8081/schemas/types
 
 ## Configuration
 
-All settings are defined in `src/main/resources/application.yml` and can be overridden via environment variables:
+All settings are defined in `server/src/main/resources/application.yml` and can be overridden via environment variables:
 
 | Environment Variable | Default | Description |
 |---|---|---|
@@ -111,7 +111,7 @@ All reads are served directly from `InMemoryStore`, which holds the fully materi
 ## Project Structure
 
 ```
-src/main/java/io/schemaregistry/mirror/
+server/src/main/java/io/schemaregistry/mirror/
 ├── SchemaRegistryMirrorApplication.java   # Application entry point
 ├── config/                                # Spring configuration
 │   ├── SchemaRegistryProperties.java      # Binds schema.registry.* properties
@@ -338,16 +338,16 @@ All error responses use the format:
 Build the project (without tests):
 
 ```bash
-./gradlew build -x test
+./gradlew :server:build -x test
 ```
 
 Build only the fat JAR:
 
 ```bash
-./gradlew bootJar
+./gradlew :server:bootJar
 ```
 
-The JAR is output to `build/libs/schema-registry-mirror-0.1.0-SNAPSHOT.jar`.
+The JAR is output to `server/build/libs/schema-registry-mirror-0.1.0-SNAPSHOT.jar`.
 
 Build the Docker image:
 
@@ -364,13 +364,13 @@ The Dockerfile uses a multi-stage build: `gradle:8.12-jdk21` for building, `ecli
 Requires Docker (for Testcontainers with Kafka):
 
 ```bash
-./gradlew test
+./gradlew :server:test
 ```
 
 Run a single test class:
 
 ```bash
-./gradlew test --tests "io.schemaregistry.mirror.integration.SomeTest"
+./gradlew :server:test --tests "io.schemaregistry.mirror.integration.SomeTest"
 ```
 
 ### Shell Integration Tests
@@ -400,15 +400,15 @@ The test script covers: root endpoint, subject CRUD, schema registration (AVRO, 
 Requires a running Kafka broker at the configured bootstrap servers.
 
 ```bash
-./gradlew bootJar
-java -jar build/libs/schema-registry-mirror-0.1.0-SNAPSHOT.jar
+./gradlew :server:bootJar
+java -jar server/build/libs/schema-registry-mirror-0.1.0-SNAPSHOT.jar
 ```
 
 Override configuration via environment variables:
 
 ```bash
 SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS=kafka1:9092,kafka2:9092 \
-  java -jar build/libs/schema-registry-mirror-0.1.0-SNAPSHOT.jar
+  java -jar server/build/libs/schema-registry-mirror-0.1.0-SNAPSHOT.jar
 ```
 
 ### Docker
