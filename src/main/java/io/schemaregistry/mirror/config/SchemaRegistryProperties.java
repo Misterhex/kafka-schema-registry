@@ -15,6 +15,7 @@ public class SchemaRegistryProperties {
     private int port = 8081;
     private long initTimeout = 60000;
     private long kafkaStoreTimeoutMs = 500;
+    private Auth auth = new Auth();
 
     public String getKafkaBootstrapServers() {
         return kafkaBootstrapServers;
@@ -94,5 +95,34 @@ public class SchemaRegistryProperties {
 
     public void setKafkaStoreTimeoutMs(long kafkaStoreTimeoutMs) {
         this.kafkaStoreTimeoutMs = kafkaStoreTimeoutMs;
+    }
+
+    public Auth getAuth() {
+        return auth;
+    }
+
+    public void setAuth(Auth auth) {
+        this.auth = auth;
+    }
+
+    public static class Auth {
+        private String username = "admin";
+        private String password;
+
+        public String getUsername() {
+            return username;
+        }
+
+        public void setUsername(String username) {
+            this.username = username;
+        }
+
+        public String getPassword() {
+            return password;
+        }
+
+        public void setPassword(String password) {
+            this.password = password;
+        }
     }
 }
