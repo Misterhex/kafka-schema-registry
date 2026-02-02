@@ -71,10 +71,43 @@ All code lives under `io.schemaregistry.mirror`:
 - `exception/` — `SchemaRegistryException` with Confluent-compatible error codes, `GlobalExceptionHandler`
 - `schema/` — `CompatibilityLevel` enum (NONE, BACKWARD, FORWARD, FULL, and their TRANSITIVE variants)
 
+## A/B Testing Module
+
+The `ab-testing/` subproject is a CLI application that validates the Mirror implementation against the official Confluent Schema Registry. It sends identical requests to both instances and compares responses across 18 test phases (registration, evolution, compatibility, deletes, error codes, protobuf, references, cleanup, etc.).
+
+```bash
+# Build
+./gradlew :ab-testing:build -x test
+
+# Start both registries for A/B testing
+docker compose -f docker-compose-ab-test.yml up -d
+
+# Run A/B tests
+./gradlew :ab-testing:bootRun
+
+# Or via JAR
+java -jar ab-testing/build/libs/ab-testing-0.1.0-SNAPSHOT.jar
+```
+
+**Configuration** (env vars or Spring properties):
+- `ABTEST_CONFLUENT_URL` — Confluent SR endpoint (default: `http://localhost:8085`)
+- `ABTEST_MIRROR_URL` — Mirror SR endpoint (default: `http://localhost:8086`)
+- `ABTEST_MIRROR_USERNAME` / `ABTEST_MIRROR_PASSWORD` — Auth credentials for mirror
+- `ABTEST_REPORT_FILE` — Output report path (default: `ab-test-report.json`)
+
+**Key classes** under `io.schemaregistry.abtest`:
+- `AbTestRunner` orchestrates all test phases and collects results
+- `HttpExecutor` sends identical requests to both registries
+- `ResponseComparator` compares responses using three modes: `EXACT`, `SET` (order-independent), `STRUCTURAL` (ignoring transient fields like timestamps)
+- Test phases are in `tests/` — each implements `TestPhase` via `AbstractTestPhase`
+
+Exit code 0 = all tests passed, 1 = differences found.
+
 ## Testing
 
 - **Unit/integration tests:** JUnit 5 via `./gradlew :server:test`. Uses Testcontainers (`org.testcontainers:kafka`) so Docker must be running.
 - **Bash integration tests:** `test.sh` exercises the full REST API with curl against a running instance. Set `SR_URL` to override the default `http://localhost:8081`.
+- **A/B tests:** See "A/B Testing Module" section above.
 
 ## Configuration
 

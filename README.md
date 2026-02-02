@@ -2,6 +2,13 @@
 
 A wire-compatible [Confluent Schema Registry](https://docs.confluent.io/platform/current/schema-registry/index.html) implementation built with Spring Boot 3.4.1 and Java 21. It stores schemas in a compacted Kafka topic (`_schemas`) and materializes them in memory, providing the same REST API as the Confluent Schema Registry. Supports AVRO, JSON, and PROTOBUF schema types.
 
+## Modules
+
+| Module | Description |
+|---|---|
+| `server` | The Schema Registry Mirror application |
+| `ab-testing` | CLI tool that validates the Mirror against Confluent Schema Registry |
+
 ## Prerequisites
 
 | Dependency | Version | Notes |
@@ -110,6 +117,8 @@ All reads are served directly from `InMemoryStore`, which holds the fully materi
 
 ## Project Structure
 
+### Server (`server/`)
+
 ```
 server/src/main/java/io/schemaregistry/mirror/
 ├── SchemaRegistryMirrorApplication.java   # Application entry point
@@ -167,6 +176,47 @@ server/src/main/java/io/schemaregistry/mirror/
 **`exception/`** — `SchemaRegistryException` carries Confluent-compatible error codes (40401, 42201, etc.). `GlobalExceptionHandler` is a `@RestControllerAdvice` that translates exceptions into JSON error responses.
 
 **`schema/`** — Contains the `CompatibilityLevel` enum with seven levels: `NONE`, `BACKWARD`, `BACKWARD_TRANSITIVE`, `FORWARD`, `FORWARD_TRANSITIVE`, `FULL`, `FULL_TRANSITIVE`.
+
+### A/B Testing (`ab-testing/`)
+
+```
+ab-testing/src/main/java/io/schemaregistry/abtest/
+├── AbTestApplication.java              # Entry point (CommandLineRunner)
+├── config/
+│   └── AbTestProperties.java           # Binds abtest.* properties
+├── runner/
+│   ├── AbTestRunner.java               # Orchestrates all test phases
+│   └── HttpExecutor.java               # Sends identical requests to both registries
+├── comparator/
+│   ├── ResponseComparator.java         # Compares responses from both registries
+│   └── ComparisonMode.java             # EXACT, SET (order-independent), STRUCTURAL
+├── model/
+│   ├── TestReport.java                 # Aggregate test results
+│   └── TestResult.java                 # Individual test result (pass/diff)
+├── report/
+│   └── ReportGenerator.java            # Writes JSON report to file
+└── tests/                              # 18 test phases (Phase1–Phase18)
+    ├── TestPhase.java                  # Phase interface
+    ├── AbstractTestPhase.java          # Base class with shared helpers
+    ├── Phase1EmptyState.java           # Verify empty state on both registries
+    ├── Phase2Registration.java         # Schema registration (AVRO)
+    ├── Phase3Evolution.java            # Schema evolution
+    ├── Phase4Compatibility.java        # Compatibility checks
+    ├── Phase5SchemaIdQueries.java      # Schema lookup by ID
+    ├── Phase6ConfigOperations.java     # Config CRUD
+    ├── Phase7ModeOperations.java       # Mode CRUD
+    ├── Phase8JsonSchema.java           # JSON Schema support
+    ├── Phase9DeleteOperations.java     # Soft and permanent deletes
+    ├── Phase10ErrorCases.java          # Error response parity
+    ├── Phase11ContentType.java         # Content-type handling
+    ├── Phase12Metadata.java            # Server metadata endpoints
+    ├── Phase13TwoPhaseDelete.java      # Two-phase delete workflow
+    ├── Phase14QueryParameters.java     # Query parameter handling
+    ├── Phase15ErrorCodes.java          # Error code parity
+    ├── Phase16ProtobufAndAdvanced.java # Protobuf schema support
+    ├── Phase17ReferencesAndEdgeCases.java # Schema references, edge cases
+    └── Phase18Cleanup.java             # Cleanup all test data
+```
 
 ## Entrypoints
 
@@ -335,19 +385,31 @@ All error responses use the format:
 
 ## Building
 
-Build the project (without tests):
+Build both modules (without tests):
+
+```bash
+./gradlew build -x test
+```
+
+Build the server only:
 
 ```bash
 ./gradlew :server:build -x test
 ```
 
-Build only the fat JAR:
+Build the server fat JAR:
 
 ```bash
 ./gradlew :server:bootJar
 ```
 
 The JAR is output to `server/build/libs/schema-registry-mirror-0.1.0-SNAPSHOT.jar`.
+
+Build the ab-testing module:
+
+```bash
+./gradlew :ab-testing:build -x test
+```
 
 Build the Docker image:
 
@@ -392,6 +454,68 @@ docker compose down -v
 ```
 
 The test script covers: root endpoint, subject CRUD, schema registration (AVRO, JSON, PROTOBUF), versioning, schema lookup by ID and content, compatibility checking, config and mode management, soft and permanent deletion, error cases, content-type validation, and server metadata.
+
+### A/B Tests
+
+See the [A/B Testing](#ab-testing) section below for running comparative tests against the Confluent Schema Registry.
+
+## A/B Testing
+
+The `ab-testing` module validates the Mirror implementation against the official Confluent Schema Registry by sending identical API requests to both instances and comparing the responses. It runs 18 test phases covering the full API surface: registration, evolution, compatibility, schema ID queries, config/mode operations, JSON Schema, deletes, error cases, content types, metadata, two-phase deletes, query parameters, error codes, Protobuf, schema references, and cleanup.
+
+### Running A/B Tests
+
+```bash
+# 1. Start Kafka, Confluent Schema Registry (port 8085), and Mirror (port 8086)
+docker compose -f docker-compose-ab-test.yml up -d
+
+# 2. Build the ab-testing module
+./gradlew :ab-testing:build -x test
+
+# 3. Run the tests
+./gradlew :ab-testing:bootRun
+
+# Or run the JAR directly
+./gradlew :ab-testing:bootJar
+java -jar ab-testing/build/libs/ab-testing-0.1.0-SNAPSHOT.jar
+
+# 4. Clean up
+docker compose -f docker-compose-ab-test.yml down -v
+```
+
+The test runner exits with code 0 if all responses match, or code 1 if any differences are found. A detailed JSON report is written to `ab-test-report.json` (configurable).
+
+### A/B Test Configuration
+
+| Environment Variable | Default | Description |
+|---|---|---|
+| `ABTEST_CONFLUENT_URL` | `http://localhost:8085` | Confluent Schema Registry endpoint |
+| `ABTEST_MIRROR_URL` | `http://localhost:8086` | Schema Registry Mirror endpoint |
+| `ABTEST_MIRROR_USERNAME` | `admin` | HTTP Basic Auth username for the Mirror |
+| `ABTEST_MIRROR_PASSWORD` | `test` | HTTP Basic Auth password for the Mirror |
+| `ABTEST_REPORT_FILE` | `ab-test-report.json` | Output report file path |
+
+### Docker Compose for A/B Testing
+
+`docker-compose-ab-test.yml` provisions:
+
+| Service | Image | Host Port | Description |
+|---|---|---|---|
+| `kafka` | `apache/kafka:4.0.0` | 29092 | Kafka broker (KRaft mode) |
+| `confluent-sr` | `confluentinc/cp-schema-registry:7.7.1` | 8085 | Official Confluent Schema Registry |
+| `mirror-sr` | Built from `Dockerfile` | 8086 | Schema Registry Mirror (with auth enabled) |
+
+Each registry uses a separate Kafka topic (`_schemas_confluent` and `_schemas_mirror`) to avoid state conflicts.
+
+### Comparison Modes
+
+The response comparator supports three modes:
+
+| Mode | Description |
+|---|---|
+| `EXACT` | Responses must match exactly |
+| `SET` | JSON arrays are compared as sets (order-independent) |
+| `STRUCTURAL` | Ignores transient fields (e.g., timestamps) and compares structure |
 
 ## Running
 
