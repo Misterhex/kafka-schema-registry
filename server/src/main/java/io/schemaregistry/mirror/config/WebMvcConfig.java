@@ -12,6 +12,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import jakarta.servlet.*;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpServletResponseWrapper;
 import java.io.IOException;
@@ -64,12 +65,19 @@ public class WebMvcConfig implements WebMvcConfigurer {
             @Override
             public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
                     throws IOException, ServletException {
+                HttpServletRequest httpRequest = (HttpServletRequest) request;
+                String accept = httpRequest.getHeader("Accept");
+                boolean clientWantsPlainJson = accept != null
+                        && accept.contains("application/json")
+                        && !accept.contains("application/vnd.schemaregistry");
+
                 HttpServletResponse httpResponse = (HttpServletResponse) response;
+                String targetContentType = clientWantsPlainJson ? JSON : SCHEMA_REGISTRY_V1_JSON;
                 HttpServletResponseWrapper wrapper = new HttpServletResponseWrapper(httpResponse) {
                     @Override
                     public void setContentType(String type) {
                         if (type != null && (type.contains("application/json") || type.contains("application/vnd.schemaregistry"))) {
-                            super.setContentType(SCHEMA_REGISTRY_V1_JSON);
+                            super.setContentType(targetContentType);
                         } else {
                             super.setContentType(type);
                         }
@@ -78,7 +86,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
                     @Override
                     public void setHeader(String name, String value) {
                         if ("Content-Type".equalsIgnoreCase(name) && value != null && value.contains("application/json")) {
-                            super.setHeader(name, SCHEMA_REGISTRY_V1_JSON);
+                            super.setHeader(name, targetContentType);
                         } else {
                             super.setHeader(name, value);
                         }
@@ -87,7 +95,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
                     @Override
                     public void addHeader(String name, String value) {
                         if ("Content-Type".equalsIgnoreCase(name) && value != null && value.contains("application/json")) {
-                            super.addHeader(name, SCHEMA_REGISTRY_V1_JSON);
+                            super.addHeader(name, targetContentType);
                         } else {
                             super.addHeader(name, value);
                         }
