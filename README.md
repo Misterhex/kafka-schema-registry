@@ -165,14 +165,35 @@ replica it:
 
 1. Looks up the current leader from `LeaderState`.
 2. Builds the same request URI against the leader's advertised
-   `scheme://host:port`, appends `forward=false` to the query string, and
-   copies headers (including `Authorization`) and body verbatim.
+   `scheme://host:port`, copies headers (including `Authorization`) and
+   body verbatim, and sets the `X-Forward: true` request header.
 3. Streams the leader's response back to the client.
 
-`forward=false` is the loop-stop marker — when the leader sees it on an
-incoming request it processes the request locally instead of bouncing it
-again. Failures map to the same Confluent error codes as the upstream
-project: `50003 REQUEST_FORWARDING_FAILED` and `50004 UNKNOWN_LEADER`.
+`X-Forward: true` is the loop-stop marker — it's the same header
+Confluent SR's own client library uses (`RestService.X_FORWARD_HEADER`).
+When the receiving node sees it, it processes the request locally
+regardless of leadership state, ensuring no infinite forwarding loops.
+A legacy `?forward=false` query parameter is also honoured for
+backwards-compatibility with older tooling and curl scripts.
+
+Pure-read endpoints that happen to use `POST` (`/compatibility/...`,
+schema-by-content lookup at `POST /subjects/{s}`) are excluded from
+forwarding so they're served from local in-memory state.
+
+Failures map to the same Confluent error codes as the upstream project:
+`50003 REQUEST_FORWARDING_FAILED` and `50004 UNKNOWN_LEADER`.
+
+### Note on the election protocol vs. Confluent SR
+
+The mirror's leader election uses the `_schemas` topic itself as a
+coordination log (NoopKey heartbeats), whereas the upstream Confluent SR
+uses Kafka consumer-group coordination via `KafkaGroupLeaderElector`.
+Both approaches converge a cluster on a single primary, but they are
+**not interoperable** — a mixed cluster of mirror replicas and upstream
+Confluent SR nodes would each elect their own leader independently. For
+mirror-only clusters (which is the supported deployment) this is not an
+issue. The wire protocol that clients see is identical either way: the
+election mechanism is internal and not part of the REST API contract.
 
 ### Running a 3-replica cluster
 

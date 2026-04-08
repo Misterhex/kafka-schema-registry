@@ -119,20 +119,26 @@ versions=$(curl_q "$SR1/subjects/$SUBJECT2/versions")
 [ "$versions" = "[1]" ] || fail "Expected exactly one version after concurrent registration, got $versions"
 pass "Only one version exists after concurrent registration"
 
-# ---------- 5. ?forward=false on a follower → must NOT bounce ----------------
+# ---------- 5. X-Forward: true on a follower → must NOT bounce ---------------
 
-blue "=== 5. forward=false short-circuit on follower ==="
-SUBJECT3=ha-forward-false-test
+blue "=== 5. X-Forward header short-circuit on follower ==="
+SUBJECT3=ha-forward-header-test
 SCHEMA3='{"schema":"\"string\""}'
-# We pick the first replica we can confirm is NOT the leader (best effort:
-# it doesn't matter much because the test only asserts that no infinite
-# loop happens — the request must complete in well under 30s).
-resp=$(curl_q -X POST -d "$SCHEMA3" "$SR3/subjects/$SUBJECT3/versions?forward=false" || true)
+# Confluent SR convention: X-Forward: true tells the receiving node "I am
+# a peer, do not forward this again." Our filter must honour it. The
+# request must complete in well under 30s; an infinite loop would hit the
+# forwarding timeout.
+resp=$(curl -sS -u "$AUTH" -H "Content-Type: $CT" -H "Accept: $CT" \
+            -H "X-Forward: true" -X POST -d "$SCHEMA3" \
+            "$SR3/subjects/$SUBJECT3/versions" || true)
+echo "  X-Forward response: $resp"
+pass "X-Forward: true request completed without bouncing"
+
+# Legacy ?forward=false fallback should also work.
+SUBJECT3b=ha-forward-false-test
+resp=$(curl_q -X POST -d "$SCHEMA3" "$SR3/subjects/$SUBJECT3b/versions?forward=false" || true)
 echo "  forward=false response: $resp"
-# We don't care whether it succeeded or returned an unknown-leader error;
-# we care that it RETURNED. A loop would have hit our forwarding-request
-# timeout (30s) and failed the test outright.
-pass "forward=false request completed without bouncing"
+pass "?forward=false request completed without bouncing"
 
 # ---------- 6. Failover -------------------------------------------------------
 

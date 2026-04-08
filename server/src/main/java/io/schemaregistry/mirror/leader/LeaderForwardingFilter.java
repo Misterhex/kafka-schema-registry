@@ -33,12 +33,18 @@ import java.util.Set;
  * leader. If not, it proxies the request verbatim to the leader's advertised
  * URL and streams the response back.
  *
- * <p>Forwarding is skipped when {@code ?forward=false} is present on the
- * request, which is how we prevent infinite loops between peers (the leader
- * appends it to its own forwarded call).
+ * <p><b>Loop prevention</b> — when forwarding, the filter sets the
+ * {@code X-Forward: true} request header (the same header Confluent
+ * Schema Registry's own client library uses, see
+ * {@code RestService.X_FORWARD_HEADER}). On receiving a request with that
+ * header set the filter unconditionally processes the request locally
+ * regardless of leadership state. The legacy {@code ?forward=false} query
+ * parameter is also honoured for backwards-compatibility with older
+ * tooling.
  *
  * <p>Behavioural matches for Confluent Schema Registry:
  * <ul>
+ *   <li>Loop-stop signal is the {@code X-Forward} header.</li>
  *   <li>Error code {@code 50003} when the forwarded HTTP call fails.</li>
  *   <li>Error code {@code 50004} when no leader is currently known.</li>
  * </ul>
@@ -49,6 +55,12 @@ import java.util.Set;
  * deterministic.
  */
 public class LeaderForwardingFilter extends OncePerRequestFilter {
+
+    /**
+     * Header used by Confluent SR's own client library and inter-node forwarding
+     * to signal "this request was forwarded by a peer, do not bounce it again."
+     */
+    public static final String X_FORWARD_HEADER = "X-Forward";
 
     private static final Logger log = LoggerFactory.getLogger(LeaderForwardingFilter.class);
 
@@ -121,6 +133,10 @@ public class LeaderForwardingFilter extends OncePerRequestFilter {
             builder.method(request.getMethod(), HttpRequest.BodyPublishers.ofByteArray(body));
 
             copyRequestHeaders(request, builder);
+            // Confluent SR convention — tells the leader not to forward
+            // again. The .header() call after copyRequestHeaders ensures
+            // we win even if the incoming request had its own (false) value.
+            builder.header(X_FORWARD_HEADER, "true");
 
             log.debug("Forwarding {} {} to leader {}", request.getMethod(), request.getRequestURI(), target);
             HttpResponse<byte[]> forwardedResponse = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
@@ -144,6 +160,15 @@ public class LeaderForwardingFilter extends OncePerRequestFilter {
         if (isReadOnlyPost(request)) {
             return false;
         }
+        // Confluent SR convention: X-Forward: true means "I'm a peer, don't
+        // bounce this back." We honour it whether we're leader or follower
+        // and process the request locally.
+        String xForward = request.getHeader(X_FORWARD_HEADER);
+        if (xForward != null && "true".equalsIgnoreCase(xForward)) {
+            return false;
+        }
+        // Legacy fallback: ?forward=false query parameter (used by some
+        // older tooling and our test scripts).
         String forwardParam = request.getParameter("forward");
         if (forwardParam != null && "false".equalsIgnoreCase(forwardParam)) {
             return false;
@@ -196,7 +221,13 @@ public class LeaderForwardingFilter extends OncePerRequestFilter {
         Enumeration<String> names = request.getHeaderNames();
         while (names.hasMoreElements()) {
             String name = names.nextElement();
-            if (HOP_BY_HOP_HEADERS.contains(name.toLowerCase())) {
+            String lower = name.toLowerCase();
+            if (HOP_BY_HOP_HEADERS.contains(lower)) {
+                continue;
+            }
+            // We set X-Forward ourselves on the outgoing request, so skip
+            // any incoming value to avoid emitting two copies of the header.
+            if (X_FORWARD_HEADER.equalsIgnoreCase(name)) {
                 continue;
             }
             Enumeration<String> values = request.getHeaders(name);
