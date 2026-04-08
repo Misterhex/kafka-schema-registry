@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.confluent.kafka.schemaregistry.client.rest.entities.SchemaReference;
 import io.schemaregistry.mirror.config.SchemaRegistryProperties;
 import io.schemaregistry.mirror.exception.SchemaRegistryException;
+import io.schemaregistry.mirror.leader.LeaderState;
 import io.schemaregistry.mirror.schema.CompatibilityLevel;
 import io.schemaregistry.mirror.storage.model.*;
 import org.apache.kafka.clients.admin.AdminClient;
@@ -33,6 +34,7 @@ public class KafkaSchemaStore implements SchemaStore {
     private final KafkaProducer<byte[], byte[]> producer;
     private final KafkaConsumer<byte[], byte[]> consumer;
     private final ObjectMapper objectMapper;
+    private final LeaderState leaderState;
     private final InMemoryStore store;
     private KafkaStoreReaderThread readerThread;
     private volatile boolean initialized = false;
@@ -41,12 +43,14 @@ public class KafkaSchemaStore implements SchemaStore {
                             AdminClient adminClient,
                             KafkaProducer<byte[], byte[]> producer,
                             KafkaConsumer<byte[], byte[]> consumer,
-                            ObjectMapper objectMapper) {
+                            ObjectMapper objectMapper,
+                            LeaderState leaderState) {
         this.properties = properties;
         this.adminClient = adminClient;
         this.producer = producer;
         this.consumer = consumer;
         this.objectMapper = objectMapper;
+        this.leaderState = leaderState;
         this.store = new InMemoryStore();
 
         // Set initial compatibility from config
@@ -65,7 +69,7 @@ public class KafkaSchemaStore implements SchemaStore {
     public void start() throws Exception {
         createTopicIfNeeded();
 
-        readerThread = new KafkaStoreReaderThread(consumer, properties.getTopic(), store, objectMapper);
+        readerThread = new KafkaStoreReaderThread(consumer, properties.getTopic(), store, objectMapper, leaderState);
         readerThread.start();
 
         boolean loaded = readerThread.waitForInitialLoad(properties.getInitTimeout());

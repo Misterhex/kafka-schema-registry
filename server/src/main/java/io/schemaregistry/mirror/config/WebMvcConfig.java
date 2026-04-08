@@ -1,5 +1,7 @@
 package io.schemaregistry.mirror.config;
 
+import io.schemaregistry.mirror.leader.LeaderForwardingFilter;
+import io.schemaregistry.mirror.leader.LeaderState;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -106,6 +108,34 @@ public class WebMvcConfig implements WebMvcConfigurer {
         });
         registration.addUrlPatterns("/*");
         registration.setOrder(1);
+        return registration;
+    }
+
+    @Bean
+    public FilterRegistrationBean<BasicAuthFilter> basicAuthFilterRegistration(BasicAuthFilter filter) {
+        FilterRegistrationBean<BasicAuthFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.addUrlPatterns("/*");
+        registration.setOrder(2);
+        return registration;
+    }
+
+    @Bean
+    public BasicAuthFilter basicAuthFilter(SchemaRegistryProperties properties, ObjectMapper objectMapper) {
+        return new BasicAuthFilter(properties, objectMapper);
+    }
+
+    @Bean
+    public LeaderForwardingFilter leaderForwardingFilter(LeaderState leaderState,
+                                                          SchemaRegistryProperties properties,
+                                                          ObjectMapper objectMapper) {
+        return new LeaderForwardingFilter(leaderState, properties, objectMapper);
+    }
+
+    @Bean
+    public FilterRegistrationBean<LeaderForwardingFilter> leaderForwardingFilterRegistration(LeaderForwardingFilter filter) {
+        FilterRegistrationBean<LeaderForwardingFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.addUrlPatterns("/*");
+        registration.setOrder(3);
         return registration;
     }
 }

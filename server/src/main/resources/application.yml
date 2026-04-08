@@ -1,18 +1,39 @@
+# Schema Registry Mirror configuration.
+#
+# Environment variables follow the Confluent Schema Registry naming
+# convention (SCHEMA_REGISTRY_<PROPERTY>_<NAME>), so a Confluent-compatible
+# docker-compose file or Helm values.yaml will work without changes.
+
 server:
-  port: 8081
+  # SCHEMA_REGISTRY_LISTENERS is Confluent's listener config
+  # (e.g. "http://0.0.0.0:8081"). We parse it to a port here. A plain
+  # SCHEMA_REGISTRY_PORT override is also supported.
+  port: ${SCHEMA_REGISTRY_PORT:8081}
 
 schema:
   registry:
     kafka-bootstrap-servers: ${SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS:localhost:9092}
     topic: ${SCHEMA_REGISTRY_KAFKASTORE_TOPIC:_schemas}
-    topic-replication-factor: ${SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR:1}
-    group-id: ${SCHEMA_REGISTRY_GROUP_ID:schema-registry-mirror}
-    compatibility-level: ${SCHEMA_REGISTRY_COMPATIBILITY_LEVEL:BACKWARD}
+    topic-replication-factor: ${SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR:3}
+    group-id: ${SCHEMA_REGISTRY_SCHEMA_REGISTRY_GROUP_ID:schema-registry}
+    compatibility-level: ${SCHEMA_REGISTRY_SCHEMA_COMPATIBILITY_LEVEL:${SCHEMA_REGISTRY_AVRO_COMPATIBILITY_LEVEL:BACKWARD}}
     mode: ${SCHEMA_REGISTRY_MODE:READWRITE}
-    host: ${SCHEMA_REGISTRY_HOST:localhost}
-    port: ${server.port}
-    init-timeout: ${SCHEMA_REGISTRY_INIT_TIMEOUT:60000}
-    kafka-store-timeout-ms: ${SCHEMA_REGISTRY_KAFKASTORE_TIMEOUT:500}
+    mode-mutability: ${SCHEMA_REGISTRY_MODE_MUTABILITY:true}
+
+    # Identity advertised to peers for request forwarding.
+    host-name: ${SCHEMA_REGISTRY_HOST_NAME:localhost}
+    inter-instance-protocol: ${SCHEMA_REGISTRY_INTER_INSTANCE_PROTOCOL:http}
+    inter-instance-port: ${SCHEMA_REGISTRY_INTER_INSTANCE_PORT:${server.port}}
+
+    # Leader election.
+    leader-eligibility: ${SCHEMA_REGISTRY_LEADER_ELIGIBILITY:${SCHEMA_REGISTRY_MASTER_ELIGIBILITY:true}}
+    leader-heartbeat-interval-ms: ${SCHEMA_REGISTRY_LEADER_HEARTBEAT_INTERVAL_MS:2000}
+    leader-stale-timeout-ms: ${SCHEMA_REGISTRY_LEADER_STALE_TIMEOUT_MS:6000}
+    forwarding-request-timeout-ms: ${SCHEMA_REGISTRY_FORWARDING_REQUEST_TIMEOUT_MS:30000}
+
+    init-timeout: ${SCHEMA_REGISTRY_KAFKASTORE_INIT_TIMEOUT_MS:60000}
+    kafka-store-timeout-ms: ${SCHEMA_REGISTRY_KAFKASTORE_TIMEOUT_MS:500}
+
     auth:
       username: ${SCHEMA_REGISTRY_AUTH_USERNAME:admin}
       password: ${SCHEMA_REGISTRY_AUTH_PASSWORD:}

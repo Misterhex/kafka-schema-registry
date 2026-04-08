@@ -7,7 +7,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -17,7 +16,13 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-@Component
+/**
+ * Basic authentication filter guarding every non-actuator endpoint.
+ *
+ * <p>Registered explicitly via {@link WebMvcConfig} so that filter ordering
+ * relative to {@link io.schemaregistry.mirror.leader.LeaderForwardingFilter}
+ * is deterministic (auth runs first, then forwarding).
+ */
 public class BasicAuthFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(BasicAuthFilter.class);

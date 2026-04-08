@@ -48,19 +48,32 @@ curl http://localhost:8081/schemas/types
 
 All settings are defined in `server/src/main/resources/application.yml` and can be overridden via environment variables:
 
+All env var names follow Confluent Schema Registry conventions, so a Helm
+chart, docker-compose file, or Kubernetes manifest written for `cp-schema-registry`
+will work against the mirror without changes.
+
 | Environment Variable | Default | Description |
 |---|---|---|
+| `SCHEMA_REGISTRY_LISTENERS` | `http://0.0.0.0:8081` | Listener URL; the port is parsed and used as `server.port` |
+| `SCHEMA_REGISTRY_HOST_NAME` | `localhost` | Hostname advertised to peers for inter-instance forwarding |
+| `SCHEMA_REGISTRY_INTER_INSTANCE_PROTOCOL` | `http` | Scheme used for forwarded requests (`http` or `https`) |
+| `SCHEMA_REGISTRY_INTER_INSTANCE_PORT` | `${server.port}` | Port advertised to peers (override only when behind a proxy) |
 | `SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka bootstrap servers |
 | `SCHEMA_REGISTRY_KAFKASTORE_TOPIC` | `_schemas` | Kafka topic for schema storage |
-| `SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR` | `1` | Replication factor for the schemas topic |
-| `SCHEMA_REGISTRY_GROUP_ID` | `schema-registry-mirror` | Kafka consumer group ID |
-| `SCHEMA_REGISTRY_COMPATIBILITY_LEVEL` | `BACKWARD` | Default global compatibility level |
-| `SCHEMA_REGISTRY_MODE` | `READWRITE` | Default global mode |
-| `SCHEMA_REGISTRY_HOST` | `localhost` | Advertised host |
-| `SCHEMA_REGISTRY_INIT_TIMEOUT` | `60000` | Initialization timeout (ms) |
-| `SCHEMA_REGISTRY_KAFKASTORE_TIMEOUT` | `500` | Kafka store operation timeout (ms) |
+| `SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR` | `3` | Replication factor for the schemas topic |
+| `SCHEMA_REGISTRY_KAFKASTORE_TIMEOUT_MS` | `500` | Kafka store operation timeout (ms) |
+| `SCHEMA_REGISTRY_KAFKASTORE_INIT_TIMEOUT_MS` | `60000` | Initial topic-replay timeout (ms) |
+| `SCHEMA_REGISTRY_SCHEMA_REGISTRY_GROUP_ID` | `schema-registry` | Logical group identifier shared by all replicas |
+| `SCHEMA_REGISTRY_SCHEMA_COMPATIBILITY_LEVEL` | `BACKWARD` | Default global compatibility level |
+| `SCHEMA_REGISTRY_MODE_MUTABILITY` | `true` | Whether per-subject mode changes are allowed |
+| `SCHEMA_REGISTRY_LEADER_ELIGIBILITY` | `true` | Whether this node may become the elected leader |
+| `SCHEMA_REGISTRY_LEADER_HEARTBEAT_INTERVAL_MS` | `2000` | How often the leader writes a NoopKey heartbeat |
+| `SCHEMA_REGISTRY_LEADER_STALE_TIMEOUT_MS` | `6000` | After this long without a heartbeat, followers attempt take-over |
+| `SCHEMA_REGISTRY_FORWARDING_REQUEST_TIMEOUT_MS` | `30000` | HTTP timeout for follower-to-leader forwarding |
+| `SCHEMA_REGISTRY_AUTH_USERNAME` | `admin` | Basic-auth username |
+| `SCHEMA_REGISTRY_AUTH_PASSWORD` | _(random)_ | Basic-auth password; logged on startup if unset |
 
-The server listens on port `8081` (configured via `server.port` in `application.yml`).
+The server listens on the port specified by `SCHEMA_REGISTRY_LISTENERS` (default `8081`).
 
 Spring Boot Actuator exposes `/actuator/health` and `/actuator/info` endpoints for health checking and service metadata.
 
@@ -114,6 +127,81 @@ All reads are served directly from `InMemoryStore`, which holds the fully materi
 - **All writes go through Kafka first.** The in-memory store is never written to directly by the service layer.
 - **Durability via Kafka.** Schemas survive restarts because state is rebuilt from the compacted topic.
 - **Consistency via total ordering.** Kafka provides a single-partition total order for all schema operations.
+
+## High Availability (Single-Primary Forwarding)
+
+The mirror supports the same single-primary HA model as Confluent Schema
+Registry: any number of replicas may serve read traffic, but all mutations
+are funnelled through the elected leader. This guarantees serial
+compatibility checks and deterministic schema-id allocation.
+
+### Leader election
+
+Election is **leaderless from the brokers' point of view** — it uses the
+existing `_schemas` Kafka topic as a coordination log:
+
+1. Each replica replays the topic on startup. A `NoopKey` record carries a
+   leader-identity payload (host, port, scheme).
+2. The leader of the cluster is whichever node wrote the most recent
+   `NoopKey` observed in the log. Because the topic has a single partition
+   every replica sees the same total order and converges on the same
+   leader.
+3. The current leader heartbeats by re-writing the `NoopKey` every
+   `SCHEMA_REGISTRY_LEADER_HEARTBEAT_INTERVAL_MS` (default 2s).
+4. If a follower has not seen a heartbeat in
+   `SCHEMA_REGISTRY_LEADER_STALE_TIMEOUT_MS` (default 6s), it attempts a
+   take-over by writing its own `NoopKey`. The Kafka log linearizes
+   concurrent take-over attempts.
+5. Replicas opting out of the leader role can set
+   `SCHEMA_REGISTRY_LEADER_ELIGIBILITY=false` (read-only nodes).
+
+The current leader is observable on every replica via `GET /v1/metadata/leader`.
+
+### Request forwarding
+
+A servlet filter (`LeaderForwardingFilter`) sits in front of the controller
+layer. For every `POST`/`PUT`/`DELETE` request that arrives on a non-leader
+replica it:
+
+1. Looks up the current leader from `LeaderState`.
+2. Builds the same request URI against the leader's advertised
+   `scheme://host:port`, appends `forward=false` to the query string, and
+   copies headers (including `Authorization`) and body verbatim.
+3. Streams the leader's response back to the client.
+
+`forward=false` is the loop-stop marker — when the leader sees it on an
+incoming request it processes the request locally instead of bouncing it
+again. Failures map to the same Confluent error codes as the upstream
+project: `50003 REQUEST_FORWARDING_FAILED` and `50004 UNKNOWN_LEADER`.
+
+### Running a 3-replica cluster
+
+```bash
+docker compose -f docker-compose.ha.yml up -d --build
+./test-ha-forwarding.sh
+docker compose -f docker-compose.ha.yml down -v
+```
+
+`docker-compose.ha.yml` starts:
+
+| Service | Host port | Role |
+|---|---|---|
+| `kafka` | 29092 | Single KRaft broker |
+| `sr1` | 8081 | Mirror replica |
+| `sr2` | 8082 | Mirror replica |
+| `sr3` | 8083 | Mirror replica |
+| `cp-schema-registry` | 8085 | Confluent SR 8.1 reference for A/B tests |
+
+`test-ha-forwarding.sh` validates:
+
+1. All three replicas come up healthy.
+2. A `POST` to `sr2` is forwarded to the leader and the result is visible
+   on `sr1`, `sr2`, and `sr3`.
+3. Three concurrent identical registrations against different replicas
+   dedup to a single schema id (only possible with leader serialisation).
+4. `?forward=false` does **not** trigger an infinite forwarding loop.
+5. Killing the leader container causes a follower to be elected and
+   writes resume within ~10 seconds.
 
 ## Project Structure
 

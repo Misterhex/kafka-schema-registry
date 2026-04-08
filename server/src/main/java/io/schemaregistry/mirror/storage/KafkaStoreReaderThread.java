@@ -1,6 +1,7 @@
 package io.schemaregistry.mirror.storage;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.schemaregistry.mirror.leader.LeaderState;
 import io.schemaregistry.mirror.schema.CompatibilityLevel;
 import io.schemaregistry.mirror.storage.model.*;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -25,18 +26,21 @@ public class KafkaStoreReaderThread extends Thread {
     private final String topic;
     private final InMemoryStore store;
     private final ObjectMapper objectMapper;
+    private final LeaderState leaderState;
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final CountDownLatch initialLoadComplete = new CountDownLatch(1);
     private final AtomicLong lastWrittenOffset = new AtomicLong(-1);
     private volatile long offsetInSchemasTopic = -1;
 
     public KafkaStoreReaderThread(KafkaConsumer<byte[], byte[]> consumer, String topic,
-                                  InMemoryStore store, ObjectMapper objectMapper) {
+                                  InMemoryStore store, ObjectMapper objectMapper,
+                                  LeaderState leaderState) {
         super("kafka-store-reader");
         this.consumer = consumer;
         this.topic = topic;
         this.store = store;
         this.objectMapper = objectMapper;
+        this.leaderState = leaderState;
         setDaemon(true);
     }
 
@@ -135,7 +139,19 @@ public class KafkaStoreReaderThread extends Thread {
             } else if (key instanceof ClearSubjectKey clearKey) {
                 store.hardDeleteSubject(clearKey.getSubject());
             } else if (key instanceof NoopKey) {
-                // No-op, used for leader election
+                // Leader election: the value (if present) announces the
+                // current leader identity. A null value (tombstone) signals
+                // that the previous leader stepped down.
+                if (record.value() == null) {
+                    leaderState.observeLeader(null, record.offset());
+                } else {
+                    try {
+                        NoopValue noop = objectMapper.readValue(record.value(), NoopValue.class);
+                        leaderState.observeLeader(noop.getLeader(), record.offset());
+                    } catch (Exception e) {
+                        log.warn("Failed to decode NoopValue at offset {}: {}", record.offset(), e.getMessage());
+                    }
+                }
             }
 
             lastWrittenOffset.set(record.offset());
